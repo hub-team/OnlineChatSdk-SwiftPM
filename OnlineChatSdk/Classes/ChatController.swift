@@ -7,7 +7,7 @@
 //
 
 import UIKit
-import WebKit
+@preconcurrency import WebKit
 import AVFoundation
 
 open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessageHandler {
@@ -31,7 +31,7 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
     private static let method_destroy = "destroy"
     private static let method_pageLoaded = "pageLoaded"
     
-    public var chatView: WKWebView!
+    public var chatView: WKWebView?
     private var callJs: Array<String>!
     private var didFinish: Bool = false
     private var widgetUrl: String = ""
@@ -150,7 +150,7 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
             frame = (parent?.view.bounds)!
         }
         chatView = WKWebView(frame: frame, configuration: config)
-        chatView.navigationDelegate = self
+        chatView?.navigationDelegate = self
         view = chatView
     }
 
@@ -213,7 +213,7 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
     }
     
     private func callJs(_ script: String) {
-        chatView.evaluateJavaScript(script)
+        chatView?.evaluateJavaScript(script)
     }
     
     private func toJson(_ jsonObj: AnyObject) -> String {
@@ -319,8 +319,8 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
         if url == nil {
             url = URL(string: widgetUrl)
         }
-        chatView.load(URLRequest(url: url!))
-        chatView.allowsBackForwardNavigationGestures = true
+        chatView?.load(URLRequest(url: url!))
+        chatView?.allowsBackForwardNavigationGestures = true
     }
     
     public func injectCss(style: String) {
@@ -456,7 +456,7 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
         super.viewDidDisappear(animated)
 
         if animated && chatView != nil {
-            chatView.stopLoading()
+            chatView?.stopLoading()
             callJsDestroy()
             chatView = nil
         }
