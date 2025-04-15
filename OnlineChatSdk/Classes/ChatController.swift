@@ -10,6 +10,7 @@ import UIKit
 @preconcurrency import WebKit
 import AVFoundation
 
+@available(iOS 13.0, *)
 open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessageHandler {
 
     public static let event_operatorSendMessage = "operatorSendMessage"
@@ -37,6 +38,7 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
     private var widgetUrl: String = ""
     private var widgetOrg: String = ""
     private var css: String = ""
+    private var alertLoading: UIAlertController?
 
     private static func getUnreadedMessagesCallback(_ result: NSDictionary) -> NSDictionary {
         let resultWrapper = ChatApiMessagesWrapper(result)
@@ -132,6 +134,23 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
             callback( ChatController.getNewMessagesCallback(result!) )
         })
     }
+    
+    public static func setInfoCustomDataValue(key: String, value: String, callback: @escaping (NSDictionary?) -> Void) {
+        DispatchQueue.global().async {
+            ChatApi.setInfo(
+                ChatConfig.getApiToken(),
+                [
+                    "client": [
+                        "id": ChatConfig.getClientId(),
+                        "customData": [
+                            key: value
+                        ]
+                    ],
+                ] as [String : Any],
+                callback: callback
+            )
+        }
+    }
 
     override public func loadView() {
         let contentController = WKUserContentController()
@@ -151,9 +170,84 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
         }
         chatView = WKWebView(frame: frame, configuration: config)
         chatView?.navigationDelegate = self
+        
         view = chatView
     }
+        
+    private func getAlertLoadingActionCloseTitle() -> String {
+        let currentLanguage = Locale.current.languageCode
+        if currentLanguage == "ru" {
+            return "Закрыть"
+        }
+        return "Close"
+    }
+    
+    private func showLoadingDialog() {
+        if alertLoading != nil {
+            return
+        }
+        alertLoading = UIAlertController(
+            title: nil,
+            message: " ",
+            preferredStyle: .alert
+        )
+        alertLoading?.addAction(UIAlertAction(title: getAlertLoadingActionCloseTitle(), style: .destructive, handler: cancelLoading))
+        
+        
+        let loadingIndicator = UIActivityIndicatorView(style: .medium)
+        loadingIndicator.translatesAutoresizingMaskIntoConstraints = false
+        loadingIndicator.startAnimating()
 
+        alertLoading?.view.addSubview(loadingIndicator)
+        
+        NSLayoutConstraint.activate([
+            loadingIndicator.centerXAnchor.constraint(equalTo: alertLoading!.view.centerXAnchor),
+            loadingIndicator.bottomAnchor.constraint(equalTo: alertLoading!.view.bottomAnchor, constant: -60)
+        ])
+        present(alertLoading!, animated: true)
+    }
+                        
+    private func cancelLoading(action: UIAlertAction) {
+        onCloseSupport()
+    }
+
+    private func hideLoadingDialog() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            if self.alertLoading == nil {
+                return
+            }
+            self.alertLoading?.dismiss(animated: true, completion: nil)
+            self.alertLoading = nil
+        }
+    }
+
+
+    public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        showLoadingDialog()
+    }
+    
+    public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        hideLoadingDialog()
+        showMessage(error.localizedDescription)
+    }
+    
+    public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        hideLoadingDialog()
+        showMessage(error.localizedDescription)
+    }
+    
+    private func showMessage(_ message: String) {
+        let alert = UIAlertController(
+            title: nil,
+            message: message,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in
+            self.onCloseSupport()
+        })
+        present(alert, animated: true, completion: nil)
+    }
+    
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         didFinish = true
         if callJs != nil && !callJs.isEmpty {
@@ -162,12 +256,10 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
             }
             callJs = nil
         }
+//        hideLoadingDialog()
     }
 
     public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> ()) {
-//        print("widgetUrl = \(self.widgetUrl)")
-//        print("widgetOrg = \(self.widgetOrg)")
-//        print("absoluteString = \(navigationAction.request.url?.absoluteString)")
         if let _ = navigationAction.request.url?.host {
             if (navigationAction.request.url?.absoluteString.contains(self.widgetOrg))! {
                 decisionHandler(.allow)
@@ -213,6 +305,7 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
     }
     
     private func callJs(_ script: String) {
+        print("callJs : \(script)")
         chatView?.evaluateJavaScript(script)
     }
     
@@ -387,6 +480,7 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
     }
     
     public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        hideLoadingDialog()
         if message.name != "chatInterface" {
             return
         }
@@ -411,6 +505,8 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
         switch name {
             case ChatController.method_pageLoaded:
                 injectCss(style: self.css)
+                onChatWasOpen()
+                listenApplicationState()
                 break
             case ChatController.event_closeSupport:
                 onCloseSupport()
@@ -444,28 +540,60 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
         onEvent(name, data!)
     }
     
+    private func listenApplicationState() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appWillResignActive),
+            name: UIApplication.willResignActiveNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func appDidBecomeActive() {
+        onChatWasOpen()
+    }
+
+    @objc private func appWillResignActive() {
+        onChatWasClosed()
+    }
+
+    
+    open func onChatWasOpen() {
+        
+    }
+    
+    open func onChatWasClosed() {
+        
+    }
+    
     open func onCloseSupport() {
         if chatView == nil {
             return
         }
+        chatView?.stopLoading()
+        callJsDestroy()
+        chatView = nil
+        
         dismiss(animated: true, completion: nil)
         navigationController?.popViewController(animated: true)
+        NotificationCenter.default.removeObserver(self)
+        
+        onChatWasClosed()
     }
 
     open override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-
-        if animated && chatView != nil {
-            chatView?.stopLoading()
-            callJsDestroy()
-            chatView = nil
-        }
+        onCloseSupport()
     }
 
     open func onLinkPressed(url: URL) {
-        if UIApplication.shared.canOpenURL(url) {
-            UIApplication.shared.open(url)
-        }
+        UIApplication.shared.open(url, options: [:], completionHandler: nil)
     }
     
     open func playSound(_ systemSoundId: SystemSoundID) {
