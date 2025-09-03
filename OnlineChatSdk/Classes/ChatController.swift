@@ -39,6 +39,8 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
     private var widgetOrg: String = ""
     private var css: String = ""
     private var alertLoading: UIAlertController?
+    private let logTag = "OnlineChatSdk"
+    private var isOnCloseSupport = false
 
     private static func getUnreadedMessagesCallback(_ result: NSDictionary) -> NSDictionary {
         let resultWrapper = ChatApiMessagesWrapper(result)
@@ -163,6 +165,8 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
         let config = WKWebViewConfiguration()
         config.userContentController = contentController
         config.preferences = preferences
+        config.mediaPlaybackRequiresUserAction = false
+        config.allowsInlineMediaPlayback = true
 
         var frame = UIScreen.main.bounds
         if parent != nil && parent?.view != nil && parent?.view.bounds != nil {
@@ -172,6 +176,8 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
         chatView?.navigationDelegate = self
         
         view = chatView
+        
+        print("\(logTag) :: loadView")
     }
         
     private func getAlertLoadingActionCloseTitle() -> String {
@@ -224,16 +230,19 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
 
     public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         showLoadingDialog()
+        print("\(logTag) :: webView :: didStartProvisionalNavigation")
     }
     
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         hideLoadingDialog()
         showMessage(error.localizedDescription)
+        print("\(logTag) :: webView :: didFail")
     }
     
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
         hideLoadingDialog()
         showMessage(error.localizedDescription)
+        print("\(logTag) :: webView :: didFailProvisionalNavigation")
     }
     
     private func showMessage(_ message: String) {
@@ -256,16 +265,24 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
             }
             callJs = nil
         }
+        print("\(logTag) :: webView :: didFinish")
 //        hideLoadingDialog()
     }
 
     public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> ()) {
+        if navigationAction.request.url == nil {
+            print("\(logTag) :: webView :: navigationAction :: 0")
+            decisionHandler(.cancel)
+            return
+        }
         if let _ = navigationAction.request.url?.host {
             if (navigationAction.request.url?.absoluteString.contains(self.widgetOrg))! {
+                print("\(logTag) :: webView :: navigationAction :: 1 :: \(navigationAction.request.url!)")
                 decisionHandler(.allow)
                 return
             }
             if (navigationAction.request.url?.absoluteString.contains(self.widgetUrl))! {
+                print("\(logTag) :: webView :: navigationAction :: 2 :: \(navigationAction.request.url!)")
                 decisionHandler(.allow)
                 return
             }
@@ -274,10 +291,12 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
                 (navigationAction.request.url?.absoluteString.contains( "https://www.google.com/recaptcha/api/fallback?" ))! ||
                 (navigationAction.request.url?.absoluteString.contains( "https://www.google.com/recaptcha/api2/bframe?" ))!
             ) {
+                print("\(logTag) :: webView :: navigationAction :: 3 :: \(navigationAction.request.url!)")
                 decisionHandler(.allow)
                 return
             }
         }
+        print("\(logTag) :: webView :: navigationAction :: 3 :: \(navigationAction.request.url!)")
         decisionHandler(.cancel)
         onLinkPressed(url: navigationAction.request.url!)
     }
@@ -305,7 +324,7 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
     }
     
     private func callJs(_ script: String) {
-        print("callJs : \(script)")
+        print("\(logTag) :: callJs :: \(script)")
         chatView?.evaluateJavaScript(script)
     }
     
@@ -370,6 +389,7 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
     
     
     public func load(_ id: String, _ domain: String, _ language: String = "", _ clientId: String = "", _ apiToken: String = "", _ showCloseButton: Bool = true, css: String = "") {
+        print("\(logTag) :: load :: 1")
         if apiToken != "" {
             ChatConfig.setApiToken(apiToken)
         }
@@ -382,38 +402,47 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
         }
         self.css = css
         var encodeDomain: String = String(describing: domain.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed))
-        if (encodeDomain.contains("Optional(\"")) {
+        if encodeDomain.contains("Optional(\"") {
             encodeDomain = encodeDomain.replacingOccurrences(of: "Optional(\"", with: "")
             encodeDomain = encodeDomain.replacingOccurrences(of: "\")", with: "")
         }
         widgetUrl = "https://admin.verbox.ru/support/chat/\(id)/\(encodeDomain)"
         widgetOrg = "https://admin.verbox.ru/support/chat/\(id)/"
         var url = URL(string: widgetUrl)
-        var urlComponents = URLComponents(url: url!, resolvingAgainstBaseURL: false)
-        if !setup.isEmpty {
-            if (showCloseButton) {
-                urlComponents?.queryItems = [
-                    URLQueryItem(name: "setup", value: toJson(setup as AnyObject)),
-                    URLQueryItem(name: "sdk-show-close-button", value: "1")
-                ]
+        if url != nil {
+            var urlComponents = URLComponents(url: url!, resolvingAgainstBaseURL: false)
+            if !setup.isEmpty {
+                if (showCloseButton) {
+                    urlComponents?.queryItems = [
+                        URLQueryItem(name: "setup", value: toJson(setup as AnyObject)),
+                        URLQueryItem(name: "sdk-show-close-button", value: "1")
+                    ]
+                } else {
+                    urlComponents?.queryItems = [
+                        URLQueryItem(name: "setup", value: toJson(setup as AnyObject))
+                    ]
+                }
             } else {
-                urlComponents?.queryItems = [
-                    URLQueryItem(name: "setup", value: toJson(setup as AnyObject))
-                ]
+                if (showCloseButton) {
+                    urlComponents?.queryItems = [
+                        URLQueryItem(name: "sdk-show-close-button", value: "1")
+                    ]
+                }
             }
-        } else {
-            if (showCloseButton) {
-                urlComponents?.queryItems = [
-                    URLQueryItem(name: "sdk-show-close-button", value: "1")
-                ]
-            }
+            url = urlComponents!.url
         }
-        url = urlComponents!.url!
         if url == nil {
             url = URL(string: widgetUrl)
         }
+        if url == nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                self.showMessage("url=\(self.widgetUrl) not init")
+            }
+            return
+        }
         chatView?.load(URLRequest(url: url!))
         chatView?.allowsBackForwardNavigationGestures = true
+        print("\(logTag) :: load :: 2")
     }
     
     public func injectCss(style: String) {
@@ -476,6 +505,7 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
     }
 
     private func callJsDestroy() {
+        print("\(logTag) :: callJsDestroy")
         callJsMethod(ChatController.method_destroy, params: [])
     }
     
@@ -537,6 +567,7 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
             default:
                 break
         }
+        print("\(logTag) :: userContentController :: \(data!)")
         onEvent(name, data!)
     }
     
@@ -573,9 +604,15 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
     }
     
     open func onCloseSupport() {
+        if (isOnCloseSupport) {
+            return
+        }
+        isOnCloseSupport = true
+        print("\(logTag) :: onCloseSupport :: 1")
         if chatView == nil {
             return
         }
+        print("\(logTag) :: onCloseSupport :: 2")
         chatView?.stopLoading()
         callJsDestroy()
         chatView = nil
@@ -589,7 +626,8 @@ open class ChatController: UIViewController, WKNavigationDelegate, WKScriptMessa
 
     open override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        onCloseSupport()
+//        onCloseSupport()
+        print("\(logTag) :: viewDidDisappear")
     }
 
     open func onLinkPressed(url: URL) {
